@@ -1,0 +1,77 @@
+import numpy as np
+import time
+import pyttsx3
+import picamera
+import picamera.array
+
+# Load YOLO
+net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+
+# Loading coco.names file, which contains names of objects it can detect
+with open("coco.names", 'r') as f:              
+    classes = [line.strip() for line in f]
+
+layer_names = net.getLayerNames()
+output_layers = [layer_names[i-1] for i in net.getUnconnectedOutLayers()]
+
+# Initialize pyttsx3 engine
+engine = pyttsx3.init()
+
+with picamera.PiCamera() as camera:
+    camera.resolution = (640, 480)  # Set the resolution according to your preference
+    camera.framerate = 30  # Adjust the framerate if needed
+    time.sleep(2)  # Allow the camera to warm up
+
+    while True:
+        start_time = time.time()  #starting time counting to measure frames processing speed
+
+        with picamera.array.PiRGBArray(camera) as stream:
+            camera.capture(stream, format='bgr')
+            frame = stream.array
+
+        height, width, channels = frame.shape  # gives dimensions of current frame
+
+        blob = cv2.dnn.blobFromImage(frame, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+        net.setInput(blob)
+        outputs = net.forward(output_layers)
+
+        boxes = []
+        confidences = []
+        class_ids = []
+
+        for out in outputs:
+            for detection in out:
+                scores = detection[5:]
+                class_id = np.argmax(scores)
+                confidence = scores[class_id]
+                if confidence > 0.6:
+                    # Getting the coordinates of the bounding box
+                    center_x = int(detection[0] * width)
+                    center_y = int(detection[1] * height)
+                    w = int(detection[2] * width)
+                    h = int(detection[3] * height)
+
+                    x = int(center_x - w / 2)
+                    y = int(center_y - h / 2)
+
+                    boxes.append([x, y, w, h])
+                    confidences.append(float(confidence))
+                    class_ids.append(class_id)
+
+        indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+
+        for i in range(len(boxes)):
+            if i in indexes:
+                label = str(classes[class_ids[i]])
+                confidence = confidences[i]
+                print(f"Object: {label}, Confidence: {confidence * 100:.2f}%")
+
+                # Speak the label
+                voice = f'{label} in front of you with {confidence * 100:.2f} percent accuracy'
+                engine.say(voice)
+
+        engine.runAndWait()  # Wait for all queued speech to be spoken
+
+        end_time = time.time()    #stopping time counter after all processing is done  
+        elapsed = end_time - start_time
+        print(f'FPS: {1/elapsed:.2f}')  #gives the number of frames processed per second
